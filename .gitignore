@@ -5,3 +5,6 @@ __pycache__/
 build/
 python/sentinel/_native/
 .pytest_cache/
+security-events.json
+examples/vulnerable-fastapi/security-events.json
+examples/vulnerable-fastapi/vuln-lab.sqlite3

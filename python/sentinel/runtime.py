@@ -1,6 +1,8 @@
 import contextvars
 import json
 import logging
+from pathlib import Path
+from threading import Lock
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -12,6 +14,41 @@ _request_id = contextvars.ContextVar("sentinel_request_id", default="")
 _runtime = None
 _original_request = None
 log = logging.getLogger("sentinel.security")
+
+class _JsonSecurityLog:
+    """Small durable JSON event store for the demo; no payload values are recorded."""
+    def __init__(self, path):
+        self.path = Path(path)
+        self._lock = Lock()
+
+    def append(self, record):
+        with self._lock:
+            events = []
+            if self.path.exists():
+                try:
+                    events = json.loads(self.path.read_text(encoding="utf-8"))
+                    if not isinstance(events, list): events = []
+                except (OSError, json.JSONDecodeError):
+                    # Preserve enforcement even if an operator has corrupted the log.
+                    events = []
+            events.append(record)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+            temporary.write_text(json.dumps(events, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            temporary.replace(self.path)
+
+    def read(self):
+        if not self.path.exists(): return []
+        try:
+            contents = json.loads(self.path.read_text(encoding="utf-8"))
+            return contents if isinstance(contents, list) else []
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def clear(self):
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text("[]\n", encoding="utf-8")
 
 class SentinelBlocked(RuntimeError):
     def __init__(self, policy, reason, destination):
@@ -46,18 +83,20 @@ def _patched_request(session, method, url, **kwargs):
                   "event_type": event.event_type.value, "data": event.data_classification,
                   "destination": event.destination, "decision": "BLOCKED", "reason": reason}
         log.warning(json.dumps(record, sort_keys=True))
+        _runtime.security_log.append(record)
         raise SentinelBlocked(_runtime.policy.name, reason, event.destination)
     return _original_request(session, method, url, **kwargs)
 
 class _Runtime:
-    def __init__(self, policy):
+    def __init__(self, policy, security_log):
         self.policy = policy
         self.engine = NativeEngine(policy)
+        self.security_log = _JsonSecurityLog(security_log)
 
-def protect(app, policy):
+def protect(app, policy, security_log="security-events.json"):
     """Install the supported pre-operation hook for requests.Session.request."""
     global _runtime, _original_request
-    _runtime = _Runtime(load_policy(policy))
+    _runtime = _Runtime(load_policy(policy), security_log)
     import requests
     if _original_request is None:
         _original_request = requests.sessions.Session.request

