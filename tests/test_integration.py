@@ -50,3 +50,21 @@ def test_demo_sql_injection_is_blocked():
     with pytest.raises(SentinelBlocked) as caught:
         demo.local_demo_login("admin' -- ", "anything")
     assert caught.value.reason == "SQL_INJECTION_ATTEMPT"
+
+def test_xss_payload_is_blocked_before_rendering():
+    from sentinel.runtime import _evaluate_html
+    with pytest.raises(SentinelBlocked) as caught:
+        _evaluate_html('<svg onload="alert(1)"></svg>', "/search")
+    assert caught.value.reason == "XSS_ATTEMPT"
+
+def test_command_injection_is_blocked_before_execution():
+    import subprocess
+    with pytest.raises(SentinelBlocked) as caught:
+        subprocess.run("echo health & echo INJECTED", shell=True, capture_output=True, text=True)
+    assert caught.value.reason == "COMMAND_INJECTION_ATTEMPT"
+
+def test_requested_demo_users_exist():
+    sys.path.insert(0, str(Path(__file__).parents[1] / "examples/vulnerable-fastapi"))
+    import app as demo
+    for username in ("Ajay", "Hansika", "Sunny", "Syam"):
+        assert demo.local_demo_login(username, username.lower() + "123")["authenticated"] is True

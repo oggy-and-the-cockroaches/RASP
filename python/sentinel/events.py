@@ -7,6 +7,8 @@ class EventType(str, Enum):
     NETWORK_CONNECT = "NETWORK_CONNECT"
     NETWORK_SEND = "NETWORK_SEND"
     DB_QUERY = "DB_QUERY"
+    HTML_RENDER = "HTML_RENDER"
+    PROCESS_EXEC = "PROCESS_EXEC"
 
 @dataclass(frozen=True)
 class SecurityEvent:

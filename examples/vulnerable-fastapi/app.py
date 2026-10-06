@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import sqlite3
+import subprocess
 import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -36,9 +37,12 @@ def initialise_lab_database():
             ])
         if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             db.executemany("INSERT INTO users(username, password, role) VALUES (?, ?, ?)", [
-                ("alex", "welcome123", "analyst"),
-                ("admin", "demo-admin-password", "administrator"),
+                ("Ajay", "ajay123", "analyst"),
+                ("Hansika", "hansika123", "analyst"),
+                ("Sunny", "sunny123", "analyst"),
+                ("Syam", "syam123", "analyst"),
             ])
+        db.executemany("INSERT OR IGNORE INTO users(username, password, role) VALUES (?, ?, ?)", [("Ajay", "ajay123", "analyst"), ("Hansika", "hansika123", "analyst"), ("Sunny", "sunny123", "analyst"), ("Syam", "syam123", "analyst")])
 
 initialise_lab_database()
 
@@ -116,6 +120,17 @@ def local_demo_login(username: str = "", password: str = ""):
         return {"authenticated": False, "message": "Invalid username or password.", "demo_only": True}
     except sqlite3.DatabaseError as exc:
         return {"authenticated": False, "message": "Invalid username or password.", "sql_error": str(exc), "demo_only": True}
+
+@app.get("/api/diagnostics")
+def vulnerable_diagnostics(target: str = "local-service"):
+    """INTENTIONALLY VULNERABLE local demo: shell command built from a form field.
+    The lab accepts only a harmless echo payload, so no real system command is exposed.
+    """
+    if not all(char.isalnum() or char in " -_&" for char in target) or "echo" not in target.lower() and "&" in target:
+        return {"ok": False, "message": "Lab accepts only the harmless '& echo ...' demonstration payload."}
+    command = f"echo Checking {target}"
+    output = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=2).stdout.strip()
+    return {"ok": True, "output": output, "demo_only": True}
 
 @app.get("/search", response_class=HTMLResponse)
 def normal_search_results(query: str = ""):

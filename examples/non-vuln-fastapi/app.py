@@ -5,6 +5,8 @@ only fake local data and the same login/search training exercises.
 """
 from pathlib import Path
 import sqlite3
+import subprocess
+from fastapi import Request
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -24,11 +26,17 @@ def initialise_lab_database():
             ])
         if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             db.executemany("INSERT INTO users(username, password, role) VALUES (?, ?, ?)", [
-                ("alex", "welcome123", "analyst"),
-                ("admin", "demo-admin-password", "administrator"),
+                ("Ajay", "ajay123", "analyst"),
+                ("Hansika", "hansika123", "analyst"),
+                ("Sunny", "sunny123", "analyst"),
+                ("Syam", "syam123", "analyst"),
             ])
+        db.executemany("INSERT OR IGNORE INTO users(username, password, role) VALUES (?, ?, ?)", [("Ajay", "ajay123", "analyst"), ("Hansika", "hansika123", "analyst"), ("Sunny", "sunny123", "analyst"), ("Syam", "syam123", "analyst")])
 
 initialise_lab_database()
+
+UNTRUSTED_DEFAULT = "https://attacker.example/collect"
+TRUSTED_DEFAULT = "http://127.0.0.1:8001/receiver"
 
 @app.get("/api/login")
 def local_demo_login(username: str = "", password: str = ""):
@@ -42,6 +50,70 @@ def local_demo_login(username: str = "", password: str = ""):
         return {"authenticated": False, "message": "Invalid username or password.", "demo_only": True}
     except sqlite3.DatabaseError as exc:
         return {"authenticated": False, "message": "Invalid username or password.", "sql_error": str(exc), "demo_only": True}
+
+@app.get("/api/diagnostics")
+def vulnerable_diagnostics(target: str = "local-service"):
+    if not all(char.isalnum() or char in " -_&" for char in target) or "echo" not in target.lower() and "&" in target:
+        return {"ok": False, "message": "Lab accepts only the harmless '& echo ...' demonstration payload."}
+    command = f"echo Checking {target}"
+    output = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=2).stdout.strip()
+    return {"ok": True, "output": output, "demo_only": True}
+
+@app.get("/cases")
+def list_cases():
+    return {"cases": [
+        {"id": "secret-untrusted", "endpoint": "POST /cases/secret-untrusted", "expected": "baseline simulates an outbound send"},
+        {"id": "public-untrusted", "endpoint": "POST /cases/public-untrusted", "expected": "baseline allows"},
+        {"id": "secret-trusted", "endpoint": "POST /cases/secret-trusted", "expected": "baseline allows"},
+    ]}
+
+@app.get("/security-events")
+def security_events():
+    return {"events": [], "protected": False, "message": "No Sentinel security log in the baseline app."}
+
+@app.get("/lab/status")
+def lab_status():
+    return {"engine": "INACTIVE", "policy": None, "violations": 0, "protected_operation": None}
+
+@app.post("/lab/reset")
+def reset_lab():
+    return {"status": "reset", "message": "Baseline has no security-event log."}
+
+@app.get("/lab/sql-search")
+def vulnerable_sql_search(query: str = ""):
+    sql = f"SELECT id, title, body FROM documents WHERE title LIKE '%{query}%'"
+    try:
+        with sqlite3.connect(LAB_DATABASE) as db:
+            rows = db.execute(sql).fetchall()
+        return {"lab_only": True, "vulnerable": True, "executed_sql": sql,
+                "results": [{"id": r[0], "title": r[1], "body": r[2]} for r in rows]}
+    except sqlite3.DatabaseError as exc:
+        return {"lab_only": True, "vulnerable": True, "executed_sql": sql, "sql_error": str(exc)}
+
+@app.get("/lab/xss-preview", response_class=HTMLResponse)
+def vulnerable_xss_preview(comment: str = ""):
+    return f"<!doctype html><html><body><h3>Community comment preview</h3><div>{comment}</div></body></html>"
+
+@app.post("/receiver")
+async def trusted_receiver(request: Request):
+    return {"receiver": "trusted-local-baseline", "received_bytes": len(await request.body())}
+
+@app.post("/cases/secret-untrusted")
+def secret_to_untrusted():
+    # Baseline records what would happen but never contacts the internet.
+    return {"case": "secret-untrusted", "status": "sent", "simulated": True, "destination": UNTRUSTED_DEFAULT}
+
+@app.post("/cases/public-untrusted")
+def public_to_untrusted():
+    return {"case": "public-untrusted", "status": "sent", "simulated": True, "destination": UNTRUSTED_DEFAULT}
+
+@app.post("/cases/secret-trusted")
+def secret_to_trusted():
+    return {"case": "secret-trusted", "status": "sent", "simulated": True, "destination": TRUSTED_DEFAULT}
+
+@app.post("/send-secret")
+def send_secret():
+    return secret_to_untrusted()
 
 @app.get("/search", response_class=HTMLResponse)
 def normal_search_results(query: str = ""):

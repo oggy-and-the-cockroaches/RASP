@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import sqlite3
+import subprocess
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlparse
@@ -16,6 +17,7 @@ _request_id = contextvars.ContextVar("sentinel_request_id", default="")
 _runtime = None
 _original_request = None
 _original_sqlite_connect = None
+_original_subprocess_run = None
 log = logging.getLogger("sentinel.security")
 
 class _JsonSecurityLog:
@@ -109,6 +111,39 @@ def _evaluate_sql(statement):
         _runtime.security_log.append(record)
         raise SentinelBlocked(_runtime.policy.name, reason, "LOCAL_DATABASE")
 
+def _unsafe_html(value):
+    normalized = value.lower()
+    return bool(re.search(r"<\s*(script|svg|img|iframe|object)\b|\bon\w+\s*=|javascript:\s*", normalized))
+
+def _evaluate_html(value, resource="html"):
+    if not _unsafe_html(value): return
+    event = SecurityEvent(EventType.HTML_RENDER, request_id=_request_id.get(), resource=resource,
+                          data_classification="UNSAFE_HTML", operation_id=str(uuid4()))
+    decision, reason = _runtime.engine.evaluate(event)
+    if decision == "BLOCK":
+        record = {"event": "SECURITY_VIOLATION", "policy": _runtime.policy.name,
+                  "event_type": event.event_type.value, "resource": event.resource,
+                  "decision": "BLOCKED", "reason": reason}
+        log.warning(json.dumps(record, sort_keys=True))
+        _runtime.security_log.append(record)
+        raise SentinelBlocked(_runtime.policy.name, reason, "LOCAL_BROWSER")
+
+def _unsafe_command(command):
+    return isinstance(command, str) and bool(re.search(r"[;&|`]|$\(|\r|\n", command))
+
+def _patched_subprocess_run(command, *args, **kwargs):
+    if _unsafe_command(command):
+        event = SecurityEvent(EventType.PROCESS_EXEC, request_id=_request_id.get(), resource="subprocess",
+                              data_classification="UNSAFE_COMMAND", operation_id=str(uuid4()))
+        decision, reason = _runtime.engine.evaluate(event)
+        if decision == "BLOCK":
+            record = {"event": "SECURITY_VIOLATION", "policy": _runtime.policy.name,
+                      "event_type": event.event_type.value, "resource": "subprocess",
+                      "decision": "BLOCKED", "reason": reason}
+            log.warning(json.dumps(record, sort_keys=True)); _runtime.security_log.append(record)
+            raise SentinelBlocked(_runtime.policy.name, reason, "LOCAL_PROCESS")
+    return _original_subprocess_run(command, *args, **kwargs)
+
 class _CursorProxy:
     def __init__(self, cursor): self._cursor = cursor
     def execute(self, statement, *args, **kwargs):
@@ -139,7 +174,7 @@ class _Runtime:
 
 def protect(app, policy, security_log="security-events.json"):
     """Install the supported pre-operation hook for requests.Session.request."""
-    global _runtime, _original_request, _original_sqlite_connect
+    global _runtime, _original_request, _original_sqlite_connect, _original_subprocess_run
     _runtime = _Runtime(load_policy(policy), security_log)
     import requests
     if _original_request is None:
@@ -148,11 +183,18 @@ def protect(app, policy, security_log="security-events.json"):
     if _original_sqlite_connect is None:
         _original_sqlite_connect = sqlite3.connect
         sqlite3.connect = _protected_sqlite_connect
+    if _original_subprocess_run is None:
+        _original_subprocess_run = subprocess.run
+        subprocess.run = _patched_subprocess_run
 
     @app.middleware("http")
     async def sentinel_request_context(request, call_next):
         token = _request_id.set(request.headers.get("x-request-id", str(uuid4())))
-        try: return await call_next(request)
+        try:
+            # Guard untrusted request input before it reaches an HTML-rendering route.
+            if request.url.path in {"/search", "/lab/xss-preview"}:
+                _evaluate_html(request.query_params.get("query", request.query_params.get("comment", "")), request.url.path)
+            return await call_next(request)
         finally: _request_id.reset(token)
 
     @app.exception_handler(SentinelBlocked)

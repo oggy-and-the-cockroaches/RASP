@@ -8,3 +8,5 @@ condition:
 action: [BLOCK, LOG]
 database:
   block_unsafe_dynamic_sql: true
+html:
+  block_unsafe_reflected_html: true
