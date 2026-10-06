@@ -1,0 +1,8 @@
+name: prevent_secret_exfiltration
+when:
+  event: SECRET_ACCESS
+forbid:
+  event: NETWORK_SEND
+condition:
+  destination: UNTRUSTED
+action: [BLOCK, LOG]
