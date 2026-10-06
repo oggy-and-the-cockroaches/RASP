@@ -166,8 +166,11 @@ artifact. The protected demonstration app is in `examples/vulnerable-fastapi`:
 uvicorn app:app --app-dir examples/vulnerable-fastapi
 ```
 
-Calling `POST /send-secret` attempts to send an explicitly marked secret to an
-untrusted destination and returns a 403 before `requests` executes I/O.
+Call `GET /cases` to see the interactive scenarios. `POST /cases/secret-untrusted`
+attempts to send an explicitly marked secret to an untrusted destination and
+returns a 403 before `requests` executes I/O. The `public-untrusted` and
+`secret-trusted` cases demonstrate the two allow paths; point those at a local
+HTTP receiver when running them manually.
 
 This MVP supports only explicitly marked values (`sentinel.secret(value)`) and
 outbound `requests` calls. `localhost`, `127.0.0.1`, and `::1` are the fixed
