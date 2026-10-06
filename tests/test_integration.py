@@ -20,6 +20,6 @@ def test_blocks_before_network(monkeypatch):
     assert not executed
 def test_trusted_request_is_allowed(monkeypatch):
     app = FastAPI(); protect(app, POLICY)
-    class Response: status_code = 200
-    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", lambda *a, **k: Response())
+    response = requests.Response(); response.status_code = 200; response._content = b"ok"
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", lambda *a, **k: response)
     assert requests.post("http://localhost:8999", data=secret("api-key")).status_code == 200

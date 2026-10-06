@@ -141,14 +141,37 @@ Constant-factor latency, CPU, and memory costs can still exist and must be measu
 
 | Capability | Status |
 |---|---|
-| Python/FastAPI support and instrumentation | Planned |
-| User-defined policies and compiler | Planned |
-| C++ engine, monitoring, live blocking, logging | Planned |
+| Python/FastAPI support and `requests` instrumentation | Implemented (MVP) |
+| User-defined constrained YAML policy loader | Implemented (MVP) |
+| C++ engine, live blocking, structured logging | Implemented (MVP) |
 | Policy-builder UI and dashboard | Planned |
 | Patch generation and validation | Research direction |
 | Formal proof artifacts | Research goal |
 | Benchmark suite / complexity analysis | Research goal |
 | Other language runtimes | Future |
+
+## Running the MVP
+
+Install the package and test dependencies, then run the suite:
+
+```text
+python -m pip install -e . pytest
+python -m pytest -q
+```
+
+The first native-engine use compiles `core/cpp` with `g++` into a local runtime
+artifact. The protected demonstration app is in `examples/vulnerable-fastapi`:
+
+```text
+uvicorn app:app --app-dir examples/vulnerable-fastapi
+```
+
+Calling `POST /send-secret` attempts to send an explicitly marked secret to an
+untrusted destination and returns a 403 before `requests` executes I/O.
+
+This MVP supports only explicitly marked values (`sentinel.secret(value)`) and
+outbound `requests` calls. `localhost`, `127.0.0.1`, and `::1` are the fixed
+trusted destinations used by the demo/tests; every other host is untrusted.
 
 ## Target demo story
 
