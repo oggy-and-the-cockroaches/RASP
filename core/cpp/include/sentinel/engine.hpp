@@ -25,9 +25,10 @@ struct Result {
 // to an untrusted destination is forbidden.
 class Engine {
  public:
-  explicit Engine(std::string policy_name = "prevent_secret_exfiltration");
+  explicit Engine(std::string policy_name = "prevent_secret_exfiltration", bool block_unsafe_sql = false);
   Result evaluate(const Event& event) const;
  private:
   std::string policy_name_;
+  bool block_unsafe_sql_;
 };
 }

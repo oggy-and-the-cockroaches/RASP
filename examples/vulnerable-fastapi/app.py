@@ -27,11 +27,17 @@ def initialise_lab_database():
     """Create deliberately non-sensitive, local-only data for the SQLi exercise."""
     with sqlite3.connect(LAB_DATABASE) as db:
         db.execute("CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, title TEXT, body TEXT)")
+        db.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, role TEXT)")
         if not db.execute("SELECT 1 FROM documents LIMIT 1").fetchone():
             db.executemany("INSERT INTO documents(title, body) VALUES (?, ?)", [
                 ("Public status", "All local demo systems nominal."),
                 ("Engineering notes", "Sentinel proof-of-concept checklist."),
                 ("Internal demo record", "Fake record for local SQL injection exercise."),
+            ])
+        if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+            db.executemany("INSERT INTO users(username, password, role) VALUES (?, ?, ?)", [
+                ("alex", "welcome123", "analyst"),
+                ("admin", "demo-admin-password", "administrator"),
             ])
 
 initialise_lab_database()
@@ -97,6 +103,28 @@ def vulnerable_xss_preview(comment: str = ""):
     """INTENTIONALLY VULNERABLE: raw reflection for a sandboxed local XSS exercise."""
     return f"""<!doctype html><html><body style='font-family:system-ui;padding:16px'>
     <h3>Community comment preview</h3><div id='comment'>{comment}</div></body></html>"""
+
+@app.get("/api/login")
+def local_demo_login(username: str = "", password: str = ""):
+    """INTENTIONALLY VULNERABLE local-login endpoint for the judge demo only."""
+    sql = f"SELECT username, role FROM users WHERE username = '{username}' AND password = '{password}'"
+    try:
+        with sqlite3.connect(LAB_DATABASE) as db:
+            user = db.execute(sql).fetchone()
+        if user:
+            return {"authenticated": True, "user": user[0], "role": user[1], "demo_only": True}
+        return {"authenticated": False, "message": "Invalid username or password.", "demo_only": True}
+    except sqlite3.DatabaseError as exc:
+        return {"authenticated": False, "message": "Invalid username or password.", "sql_error": str(exc), "demo_only": True}
+
+@app.get("/search", response_class=HTMLResponse)
+def normal_search_results(query: str = ""):
+    """Normal-looking search results with intentionally unsafe reflected text for local XSS demo."""
+    with sqlite3.connect(LAB_DATABASE) as db:
+        rows = db.execute("SELECT title, body FROM documents WHERE title LIKE ?", (f"%{query}%",)).fetchall()
+    results = "".join(f"<article><b>{title}</b><p>{body}</p></article>" for title, body in rows) or "<p>No documents found.</p>"
+    return f"""<!doctype html><html><head><style>body{{font:14px system-ui;padding:13px;color:#172234}}article{{border-bottom:1px solid #d8dee8;padding:8px 0}}p{{margin:4px 0;color:#516176}}</style></head>
+    <body><div>Search results for: <strong>{query}</strong></div>{results}</body></html>"""
 
 @app.post("/receiver")
 async def trusted_receiver(request: Request):

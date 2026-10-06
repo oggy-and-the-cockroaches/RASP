@@ -8,3 +8,4 @@ python/sentinel/_native/
 security-events.json
 examples/vulnerable-fastapi/security-events.json
 examples/vulnerable-fastapi/vuln-lab.sqlite3
+examples/non-vuln-fastapi/vuln-lab.sqlite3

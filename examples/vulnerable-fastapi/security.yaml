@@ -6,3 +6,5 @@ forbid:
 condition:
   destination: UNTRUSTED
 action: [BLOCK, LOG]
+database:
+  block_unsafe_dynamic_sql: true

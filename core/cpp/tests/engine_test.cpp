@@ -9,4 +9,8 @@ int main() {
   assert(trusted.decision == sentinel::Decision::Allow);
   auto normal = engine.evaluate({"NETWORK_SEND", "r", "", "UNTRUSTED", "PUBLIC", "o"});
   assert(normal.decision == sentinel::Decision::Allow);
+  sentinel::Engine sql_engine("prevent_injection", true);
+  auto sql = sql_engine.evaluate({"DB_QUERY", "r", "sqlite", "", "UNSAFE_SQL", "o"});
+  assert(sql.decision == sentinel::Decision::Block);
+  assert(sql.reason == "SQL_INJECTION_ATTEMPT");
 }

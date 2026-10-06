@@ -43,3 +43,10 @@ def test_demo_control_cases_are_allowed(monkeypatch):
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", lambda *args, **kwargs: response)
     assert demo.public_to_untrusted(demo.Destination(destination="https://api.example.test"))["status"] == "sent"
     assert demo.secret_to_trusted(demo.Destination(destination="http://localhost:8081"))["status"] == "sent"
+
+def test_demo_sql_injection_is_blocked():
+    sys.path.insert(0, str(Path(__file__).parents[1] / "examples/vulnerable-fastapi"))
+    import app as demo
+    with pytest.raises(SentinelBlocked) as caught:
+        demo.local_demo_login("admin' -- ", "anything")
+    assert caught.value.reason == "SQL_INJECTION_ATTEMPT"

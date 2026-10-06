@@ -9,6 +9,7 @@ class Policy:
     forbidden_event: str
     destination: str
     actions: tuple[str, ...]
+    block_unsafe_sql: bool = False
 
 def _simple_yaml(text: str) -> dict:
     """Parse the deliberately small policy grammar without a runtime YAML dependency."""
@@ -33,7 +34,8 @@ def load_policy(path: str | Path) -> Policy:
         raw = json.loads(text) if text.lstrip().startswith("{") else _simple_yaml(text)
     try:
         policy = Policy(raw["name"], raw["when"]["event"], raw["forbid"]["event"],
-                        raw["condition"]["destination"], tuple(a.strip() for a in raw["action"]))
+                        raw["condition"]["destination"], tuple(a.strip() for a in raw["action"]),
+                        bool(raw.get("database", {}).get("block_unsafe_dynamic_sql", False)))
     except (KeyError, TypeError) as exc:
         raise ValueError("invalid policy: name, when.event, forbid.event, condition.destination, action required") from exc
     if policy.trigger_event != "SECRET_ACCESS" or policy.forbidden_event != "NETWORK_SEND" or policy.destination != "UNTRUSTED" or "BLOCK" not in policy.actions:

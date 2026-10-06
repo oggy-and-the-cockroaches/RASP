@@ -1,6 +1,8 @@
 import contextvars
 import json
 import logging
+import re
+import sqlite3
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlparse
@@ -13,6 +15,7 @@ from .policy import load_policy
 _request_id = contextvars.ContextVar("sentinel_request_id", default="")
 _runtime = None
 _original_request = None
+_original_sqlite_connect = None
 log = logging.getLogger("sentinel.security")
 
 class _JsonSecurityLog:
@@ -87,6 +90,47 @@ def _patched_request(session, method, url, **kwargs):
         raise SentinelBlocked(_runtime.policy.name, reason, event.destination)
     return _original_request(session, method, url, **kwargs)
 
+def _unsafe_sql(statement):
+    """Conservative MVP detector for injection syntax in dynamically built SQL."""
+    normalized = statement.lower()
+    return ("--" in normalized or "/*" in normalized or ";" in normalized or
+            bool(re.search(r"\bunion\s+select\b|\bor\s+['\"]?[0-9a-z]+['\"]?\s*=", normalized)))
+
+def _evaluate_sql(statement):
+    if not _unsafe_sql(statement): return
+    event = SecurityEvent(EventType.DB_QUERY, request_id=_request_id.get(), resource="sqlite3",
+                          data_classification="UNSAFE_SQL", operation_id=str(uuid4()))
+    decision, reason = _runtime.engine.evaluate(event)
+    if decision == "BLOCK":
+        record = {"event": "SECURITY_VIOLATION", "policy": _runtime.policy.name,
+                  "event_type": event.event_type.value, "resource": event.resource,
+                  "decision": "BLOCKED", "reason": reason}
+        log.warning(json.dumps(record, sort_keys=True))
+        _runtime.security_log.append(record)
+        raise SentinelBlocked(_runtime.policy.name, reason, "LOCAL_DATABASE")
+
+class _CursorProxy:
+    def __init__(self, cursor): self._cursor = cursor
+    def execute(self, statement, *args, **kwargs):
+        _evaluate_sql(statement)
+        return self._cursor.execute(statement, *args, **kwargs)
+    def __getattr__(self, name): return getattr(self._cursor, name)
+
+class _ConnectionProxy:
+    def __init__(self, connection): self._connection = connection
+    def __enter__(self):
+        self._connection.__enter__()
+        return self
+    def __exit__(self, *args): return self._connection.__exit__(*args)
+    def execute(self, statement, *args, **kwargs):
+        _evaluate_sql(statement)
+        return self._connection.execute(statement, *args, **kwargs)
+    def cursor(self, *args, **kwargs): return _CursorProxy(self._connection.cursor(*args, **kwargs))
+    def __getattr__(self, name): return getattr(self._connection, name)
+
+def _protected_sqlite_connect(*args, **kwargs):
+    return _ConnectionProxy(_original_sqlite_connect(*args, **kwargs))
+
 class _Runtime:
     def __init__(self, policy, security_log):
         self.policy = policy
@@ -95,12 +139,15 @@ class _Runtime:
 
 def protect(app, policy, security_log="security-events.json"):
     """Install the supported pre-operation hook for requests.Session.request."""
-    global _runtime, _original_request
+    global _runtime, _original_request, _original_sqlite_connect
     _runtime = _Runtime(load_policy(policy), security_log)
     import requests
     if _original_request is None:
         _original_request = requests.sessions.Session.request
         requests.sessions.Session.request = _patched_request
+    if _original_sqlite_connect is None:
+        _original_sqlite_connect = sqlite3.connect
+        sqlite3.connect = _protected_sqlite_connect
 
     @app.middleware("http")
     async def sentinel_request_context(request, call_next):

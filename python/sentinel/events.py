@@ -6,6 +6,7 @@ class EventType(str, Enum):
     SECRET_ACCESS = "SECRET_ACCESS"
     NETWORK_CONNECT = "NETWORK_CONNECT"
     NETWORK_SEND = "NETWORK_SEND"
+    DB_QUERY = "DB_QUERY"
 
 @dataclass(frozen=True)
 class SecurityEvent:
