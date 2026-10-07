@@ -36,13 +36,6 @@ def initialise_lab_database():
                 ("Engineering notes", "Sentinel proof-of-concept checklist."),
                 ("Internal demo record", "Fake record for local SQL injection exercise."),
             ])
-        if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-            db.executemany("INSERT INTO users(username, password, role) VALUES (?, ?, ?)", [
-                ("Ajay", "ajay123", "analyst"),
-                ("Hansika", "hansika123", "analyst"),
-                ("Sunny", "sunny123", "analyst"),
-                ("Syam", "syam123", "analyst"),
-            ])
         db.executemany("INSERT OR IGNORE INTO users(username, password, role) VALUES (?, ?, ?)", [("Ajay", "ajay123", "analyst"), ("Hansika", "hansika123", "analyst"), ("Sunny", "sunny123", "analyst"), ("Syam", "syam123", "analyst")])
 
 initialise_lab_database()
