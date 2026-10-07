@@ -3,8 +3,9 @@ from pathlib import Path
 import sys
 import sqlite3
 import subprocess
+import secrets
 import requests
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,7 @@ UNTRUSTED_DEFAULT = "https://attacker.example/collect"
 # requiring a second server during a judge presentation.
 TRUSTED_DEFAULT = "http://127.0.0.1:8000/receiver"
 LAB_DATABASE = Path(__file__).with_name("vuln-lab.sqlite3")
+_sessions: set[str] = set()
 
 def initialise_lab_database():
     """Create deliberately non-sensitive, local-only data for the SQLi exercise."""
@@ -75,18 +77,22 @@ def security_events():
     """Read recorded security decisions without exposing secret values."""
     return {"events": sentinel_runtime.security_log.read()}
 
-@app.get("/lab/status")
+def require_login(lab_session: str | None = Cookie(default=None)):
+    if not lab_session or lab_session not in _sessions:
+        raise HTTPException(status_code=401, detail="Sign in to access the training lab.")
+
+@app.get("/lab/status", dependencies=[Depends(require_login)])
 def lab_status():
     return {"engine": "ACTIVE", "policy": sentinel_runtime.policy.name,
             "violations": len(sentinel_runtime.security_log.read()),
             "protected_operation": "requests.Session.request"}
 
-@app.post("/lab/reset")
+@app.post("/lab/reset", dependencies=[Depends(require_login)])
 def reset_lab():
     sentinel_runtime.security_log.clear()
     return {"status": "reset", "message": "Demo security-event log cleared."}
 
-@app.get("/lab/sql-search")
+@app.get("/lab/sql-search", dependencies=[Depends(require_login)])
 def vulnerable_sql_search(query: str = ""):
     """INTENTIONALLY VULNERABLE: local-only SQL concatenation for the training lab.
 
@@ -102,13 +108,12 @@ def vulnerable_sql_search(query: str = ""):
     except sqlite3.DatabaseError as exc:
         return {"lab_only": True, "vulnerable": True, "executed_sql": sql, "sql_error": str(exc)}
 
-@app.get("/lab/xss-preview", response_class=HTMLResponse)
+@app.get("/lab/xss-preview", response_class=HTMLResponse, dependencies=[Depends(require_login)])
 def vulnerable_xss_preview(comment: str = ""):
     """INTENTIONALLY VULNERABLE: raw reflection for a sandboxed local XSS exercise."""
     return f"""<!doctype html><html><body style='font-family:system-ui;padding:16px'>
     <h3>Community comment preview</h3><div id='comment'>{comment}</div></body></html>"""
 
-@app.get("/api/login")
 def local_demo_login(username: str = "", password: str = ""):
     """INTENTIONALLY VULNERABLE local-login endpoint for the judge demo only."""
     sql = f"SELECT username, role FROM users WHERE username = '{username}' AND password = '{password}'"
@@ -121,18 +126,34 @@ def local_demo_login(username: str = "", password: str = ""):
     except sqlite3.DatabaseError as exc:
         return {"authenticated": False, "message": "Invalid username or password.", "sql_error": str(exc), "demo_only": True}
 
-@app.get("/api/diagnostics")
+@app.get("/api/login")
+def login(username: str = "", password: str = "", response: Response = None):
+    """The query is intentionally vulnerable; Sentinel blocks injection attempts."""
+    result = local_demo_login(username, password)
+    if result.get("authenticated"):
+        token = secrets.token_urlsafe(24)
+        _sessions.add(token)
+        response.set_cookie("lab_session", token, httponly=True, samesite="lax")
+    return result
+
+@app.get("/api/diagnostics", dependencies=[Depends(require_login)])
 def vulnerable_diagnostics(target: str = "local-service"):
     """INTENTIONALLY VULNERABLE local demo: shell command built from a form field.
-    The lab accepts only a harmless echo payload, so no real system command is exposed.
+    The lab permits a tightly scoped localhost ping for a visible local CLI demo.
     """
-    if not all(char.isalnum() or char in " -_&" for char in target) or "echo" not in target.lower() and "&" in target:
-        return {"ok": False, "message": "Lab accepts only the harmless '& echo ...' demonstration payload."}
-    command = f"echo Checking {target}"
+    target = target.strip()
+    local_pings = {"ping localhost", "ping 127.0.0.1", "ping ::1",
+                   "ping -n 1 localhost", "ping -n 1 127.0.0.1", "ping -n 1 ::1"}
+    if target in local_pings:
+        command = target
+    elif all(char.isalnum() or char in " -_&" for char in target) and ("echo" in target.lower() or "&" not in target):
+        command = f"echo Checking {target}"
+    else:
+        return {"ok": False, "message": "Use a local ping (for example 'ping 127.0.0.1') or the harmless echo demo."}
     output = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=2).stdout.strip()
-    return {"ok": True, "output": output, "demo_only": True}
+    return {"ok": True, "output": output}
 
-@app.get("/search", response_class=HTMLResponse)
+@app.get("/search", response_class=HTMLResponse, dependencies=[Depends(require_login)])
 def normal_search_results(query: str = ""):
     """Normal-looking search results with intentionally unsafe reflected text for local XSS demo."""
     with sqlite3.connect(LAB_DATABASE) as db:
