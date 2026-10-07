@@ -16,7 +16,6 @@ app = FastAPI(title="Sentinel RASP test-case demo", version="0.1.0")
 sentinel_runtime = protect(
     app,
     policy=Path(__file__).with_name("security.yaml"),
-    security_log=Path(__file__).with_name("security-events.json"),
 )
 
 UNTRUSTED_DEFAULT = "https://attacker.example/collect"
@@ -81,18 +80,18 @@ def require_login(lab_session: str | None = Cookie(default=None)):
     if not lab_session or lab_session not in _sessions:
         raise HTTPException(status_code=401, detail="Sign in to access the training lab.")
 
-@app.get("/lab/status", dependencies=[Depends(require_login)])
+@app.get("/lab/status")
 def lab_status():
     return {"engine": "ACTIVE", "policy": sentinel_runtime.policy.name,
             "violations": len(sentinel_runtime.security_log.read()),
             "protected_operation": "requests.Session.request"}
 
-@app.post("/lab/reset", dependencies=[Depends(require_login)])
+@app.post("/lab/reset")
 def reset_lab():
     sentinel_runtime.security_log.clear()
     return {"status": "reset", "message": "Demo security-event log cleared."}
 
-@app.get("/lab/sql-search", dependencies=[Depends(require_login)])
+@app.get("/lab/sql-search")
 def vulnerable_sql_search(query: str = ""):
     """INTENTIONALLY VULNERABLE: local-only SQL concatenation for the training lab.
 
@@ -108,7 +107,7 @@ def vulnerable_sql_search(query: str = ""):
     except sqlite3.DatabaseError as exc:
         return {"lab_only": True, "vulnerable": True, "executed_sql": sql, "sql_error": str(exc)}
 
-@app.get("/lab/xss-preview", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+@app.get("/lab/xss-preview", response_class=HTMLResponse)
 def vulnerable_xss_preview(comment: str = ""):
     """INTENTIONALLY VULNERABLE: raw reflection for a sandboxed local XSS exercise."""
     return f"""<!doctype html><html><body style='font-family:system-ui;padding:16px'>
@@ -136,7 +135,7 @@ def login(username: str = "", password: str = "", response: Response = None):
         response.set_cookie("lab_session", token, httponly=True, samesite="lax")
     return result
 
-@app.get("/api/diagnostics", dependencies=[Depends(require_login)])
+@app.get("/api/diagnostics")
 def vulnerable_diagnostics(target: str = "local-service"):
     """INTENTIONALLY VULNERABLE local demo: shell command built from a form field.
     The lab permits a tightly scoped localhost ping for a visible local CLI demo.
@@ -153,7 +152,7 @@ def vulnerable_diagnostics(target: str = "local-service"):
     output = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=2).stdout.strip()
     return {"ok": True, "output": output}
 
-@app.get("/search", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+@app.get("/search", response_class=HTMLResponse)
 def normal_search_results(query: str = ""):
     """Normal-looking search results with intentionally unsafe reflected text for local XSS demo."""
     with sqlite3.connect(LAB_DATABASE) as db:

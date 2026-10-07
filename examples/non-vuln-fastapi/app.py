@@ -66,7 +66,7 @@ def login(username: str = "", password: str = "", response: Response = None):
         response.set_cookie("lab_session", token, httponly=True, samesite="lax")
     return result
 
-@app.get("/api/diagnostics", dependencies=[Depends(require_login)])
+@app.get("/api/diagnostics")
 def vulnerable_diagnostics(target: str = "local-service"):
     target = target.strip()
     local_pings = {"ping localhost", "ping 127.0.0.1", "ping ::1",
@@ -92,15 +92,15 @@ def list_cases():
 def security_events():
     return {"events": [], "protected": False, "message": "No Sentinel security log in the baseline app."}
 
-@app.get("/lab/status", dependencies=[Depends(require_login)])
+@app.get("/lab/status")
 def lab_status():
     return {"engine": "INACTIVE", "policy": None, "violations": 0, "protected_operation": None}
 
-@app.post("/lab/reset", dependencies=[Depends(require_login)])
+@app.post("/lab/reset")
 def reset_lab():
     return {"status": "reset", "message": "Baseline has no security-event log."}
 
-@app.get("/lab/sql-search", dependencies=[Depends(require_login)])
+@app.get("/lab/sql-search")
 def vulnerable_sql_search(query: str = ""):
     sql = f"SELECT id, title, body FROM documents WHERE title LIKE '%{query}%'"
     try:
@@ -111,7 +111,7 @@ def vulnerable_sql_search(query: str = ""):
     except sqlite3.DatabaseError as exc:
         return {"lab_only": True, "vulnerable": True, "executed_sql": sql, "sql_error": str(exc)}
 
-@app.get("/lab/xss-preview", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+@app.get("/lab/xss-preview", response_class=HTMLResponse)
 def vulnerable_xss_preview(comment: str = ""):
     return f"<!doctype html><html><body><h3>Community comment preview</h3><div>{comment}</div></body></html>"
 
@@ -136,7 +136,7 @@ def secret_to_trusted():
 def send_secret():
     return secret_to_untrusted()
 
-@app.get("/search", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+@app.get("/search", response_class=HTMLResponse)
 def normal_search_results(query: str = ""):
     """INTENTIONALLY VULNERABLE local training endpoint: raw reflected HTML."""
     with sqlite3.connect(LAB_DATABASE) as db:

@@ -172,9 +172,12 @@ class _Runtime:
         self.engine = NativeEngine(policy)
         self.security_log = _JsonSecurityLog(security_log)
 
-def protect(app, policy, security_log="security-events.json"):
-    """Install the supported pre-operation hook for requests.Session.request."""
+def protect(app, policy, security_log=None):
+    """Install Sentinel hooks and its SDK-hosted audit-log interface on an app."""
     global _runtime, _original_request, _original_sqlite_connect, _original_subprocess_run
+    # Audit data belongs to the SDK, rather than to the application being protected.
+    if security_log is None:
+        security_log = Path(__file__).with_name("_logs") / "security-events.json"
     _runtime = _Runtime(load_policy(policy), security_log)
     import requests
     if _original_request is None:
@@ -195,10 +198,28 @@ def protect(app, policy, security_log="security-events.json"):
             if request.url.path in {"/search", "/lab/xss-preview"}:
                 _evaluate_html(request.query_params.get("query", request.query_params.get("comment", "")), request.url.path)
             return await call_next(request)
+        except SentinelBlocked as exc:
+            # Exceptions raised by middleware do not reach FastAPI's route-level
+            # exception handler, so return the enforcement result here.
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=403, content={
+                "error": "security_operation_blocked", "reason": exc.reason, "policy": exc.policy,
+            })
         finally: _request_id.reset(token)
 
     @app.exception_handler(SentinelBlocked)
     async def sentinel_blocked_handler(request, exc):
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=403, content={"error": "security_operation_blocked", "reason": exc.reason, "policy": exc.policy})
+
+    @app.get("/logs", include_in_schema=False)
+    async def sentinel_logs_interface():
+        """SDK-owned UI; the protected app exposes it through its own URL."""
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(Path(__file__).with_name("logs.html").read_text(encoding="utf-8"))
+
+    @app.get("/logs/events", include_in_schema=False)
+    async def sentinel_log_events():
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"events": _runtime.security_log.read()})
     return _runtime

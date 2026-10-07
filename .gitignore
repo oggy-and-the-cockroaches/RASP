@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 build/
 python/sentinel/_native/
+python/sentinel/_logs/
 .pytest_cache/
 security-events.json
 examples/vulnerable-fastapi/security-events.json
